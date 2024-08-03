@@ -1,5 +1,5 @@
 #!/bin/bash
-#wget 
+#wget https://github.com/idanre1/azure_deploys/raw/main/openvpn.sh; chmod +x openvpn.sh; ./openvpn.sh
 
 # echo "*** Detect IP"
 # ipv4=`dig -4 TXT +short o-o.myaddr.l.google.com @ns1.google.com | tr -d '"'`
