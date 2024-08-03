@@ -9,4 +9,4 @@ wget https://git.io/vpn -O openvpn-install.sh
 sudo chmod +x openvpn-install.sh
 
 echo "*** install openvpn"
-printf "1\n\n1\ndefault_client\n\n" | sudo bash openvpn-install.sh
+printf "1\n\n1\ndefault\n\n" | sudo bash openvpn-install.sh
