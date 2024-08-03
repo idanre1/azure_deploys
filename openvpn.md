@@ -1,5 +1,8 @@
 # openvpn server
-Use `openvpn.sh` to instal a freshly new server to serve as vpn
+- Use `openvpn.sh` to instal a freshly new server to serve as vpn
+- Then add firewall inbound ports
+  - https tcp 443
+  - openvpn udp 1194
 # server address
 ```
 network address space 10.8.0.0/24
