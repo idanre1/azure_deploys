@@ -1,4 +1,5 @@
 # openvpn server
+https://www.cyberciti.biz/faq/howto-setup-openvpn-server-on-ubuntu-linux-14-04-or-16-04-lts/
 - Use `openvpn.sh` to instal a freshly new server to serve as vpn
 - Then add firewall inbound ports
   - https tcp 443
