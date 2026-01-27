@@ -12,25 +12,35 @@ usage() {
 Usage: sudo ./deploy_ollama_service.sh [options]
 
 Options:
-  --model NAME           Model to warm up (default: llama3.1:8b-instruct-q4_K_M)
-  --num-ctx N            Context window tokens (default: 4096)
-  --threads N            Threads for OMP/GGML/OLLAMA (default: nproc)
-  --port P               Port to bind on localhost (default: 11434)
-  --hugepages N          Configure vm.nr_hugepages (persistent). 0 = skip (default: 0)
-  --install-ollama       Install Ollama using official install script if missing
-  --no-warmup            Do not create/enable warmup service
-  --temperature T        Temperature for warmup run (default: 0.7)
-  --top-p P              Top-p for warmup run (default: 0.9)
-  -h, --help             Show this help
+  --base-model NAME        Base model to pull and derive from (default: llama3.1:8b-instruct-q4_K_M)
+  --profile-name NAME      Name for the derived model profile (default: cpu-opt)
+  --num-ctx N              Context window tokens (default: 4096)
+  --threads N              Threads for OMP/GGML/OLLAMA (default: nproc)
+  --port P                 Port to bind on localhost (default: 11434)
+  --hugepages N            Configure vm.nr_hugepages (persistent). 0 = skip (default: 0)
+  --install-ollama         Install Ollama using official install script if missing
+  --no-warmup              Do not create/enable warmup service
+  --temperature T          Temperature (written into Modelfile) (default: 0.7)
+  --top-p P                Top-p (written into Modelfile) (default: 0.9)
+  --top-k K                Top-k (written into Modelfile) (default: 40)
+  --repeat-penalty R       Repeat penalty (written into Modelfile) (default: 1.1)
+  --keep-alive DURATION    Keep-alive for server (e.g. 5m, 1h) (optional)
+  --force-recreate         Always recreate the derived model profile
+  -h, --help               Show this help
 
-Example:
+Examples:
+  sudo ./deploy_ollama_service.sh --install-ollama
+
   sudo ./deploy_ollama_service.sh \
-    --model llama3.1:8b-instruct-q4_K_M \
+    --base-model llama3.1:8b-instruct-q4_K_M \
+    --profile-name llama3.1-8b-cpu-opt \
     --num-ctx 4096 \
     --threads 2 \
     --port 11434 \
     --hugepages 1024 \
-    --install-ollama
+    --install-ollama \
+    --force-recreate
+
 USAGE
 }
 
@@ -48,7 +58,8 @@ check_systemd() {
   fi
 }
 
-MODEL="llama3.1:8b-instruct-q4_K_M"
+BASE_MODEL="llama3.1:8b-instruct-q4_K_M"
+PROFILE_NAME="cpu-opt"
 NUM_CTX=4096
 THREADS="$(nproc)"
 PORT=11434
@@ -57,10 +68,15 @@ INSTALL_OLLAMA=0
 WARMUP=1
 TEMP=0.7
 TOPP=0.9
+TOPK=40
+REPEAT_PENALTY=1.1
+KEEP_ALIVE=""
+FORCE_RECREATE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --model) MODEL="$2"; shift 2;;
+    --base-model) BASE_MODEL="$2"; shift 2;;
+    --profile-name) PROFILE_NAME="$2"; shift 2;;
     --num-ctx) NUM_CTX="$2"; shift 2;;
     --threads) THREADS="$2"; shift 2;;
     --port) PORT="$2"; shift 2;;
@@ -69,10 +85,14 @@ while [[ $# -gt 0 ]]; do
     --no-warmup) WARMUP=0; shift;;
     --temperature) TEMP="$2"; shift 2;;
     --top-p) TOPP="$2"; shift 2;;
+    --top-k) TOPK="$2"; shift 2;;
+    --repeat-penalty) REPEAT_PENALTY="$2"; shift 2;;
+    --keep-alive) KEEP_ALIVE="$2"; shift 2;;
+    --force-recreate) FORCE_RECREATE=1; shift;;
     -h|--help) usage; exit 0;;
     *) echo "[ERROR] Unknown argument: $1" >&2; usage; exit 1;;
   esac
-done
+ done
 
 require_root
 check_systemd
@@ -101,6 +121,46 @@ if [[ "$HUGEPAGES" -gt 0 ]]; then
   echo "vm.nr_hugepages=${HUGEPAGES}" > /etc/sysctl.d/99-ollama-hugepages.conf
 fi
 
+# Pull base model
+echo "[INFO] Pulling base model: ${BASE_MODEL}"
+${OLLAMA_BIN} pull "${BASE_MODEL}"
+
+# Create derived model profile via Modelfile
+DERIVED_MODEL="${PROFILE_NAME}"
+# If user provided a name without a tag, keep it; otherwise accept tags.
+# We will create it exactly as given.
+
+MODEL_DIR="/etc/ollama"
+mkdir -p "${MODEL_DIR}"
+MODELF="${MODEL_DIR}/Modelfile.${DERIVED_MODEL//\//_}"
+
+cat > "${MODELF}" <<EOF
+FROM ${BASE_MODEL}
+PARAMETER num_ctx ${NUM_CTX}
+PARAMETER temperature ${TEMP}
+PARAMETER top_p ${TOPP}
+PARAMETER top_k ${TOPK}
+PARAMETER repeat_penalty ${REPEAT_PENALTY}
+EOF
+
+if [[ -n "${KEEP_ALIVE}" ]]; then
+  echo "PARAMETER keep_alive ${KEEP_ALIVE}" >> "${MODELF}"
+fi
+
+# Decide whether to (re)create
+if [[ $FORCE_RECREATE -eq 1 ]]; then
+  echo "[INFO] Recreating derived model (forced): ${DERIVED_MODEL}"
+  ${OLLAMA_BIN} create "${DERIVED_MODEL}" -f "${MODELF}"
+else
+  # If model doesn't exist, create it; otherwise leave as is
+  if ! ${OLLAMA_BIN} list | awk '{print $1}' | grep -Fxq "${DERIVED_MODEL}"; then
+    echo "[INFO] Creating derived model: ${DERIVED_MODEL}"
+    ${OLLAMA_BIN} create "${DERIVED_MODEL}" -f "${MODELF}"
+  else
+    echo "[INFO] Derived model already exists: ${DERIVED_MODEL} (use --force-recreate to update)"
+  fi
+fi
+
 # Create systemd service for Ollama
 cat > /etc/systemd/system/ollama.service <<SERVICE
 [Unit]
@@ -120,16 +180,14 @@ Environment=OLLAMA_NUM_THREADS=${THREADS}
 # Bind to localhost only
 Environment=OLLAMA_HOST=127.0.0.1:${PORT}
 
-# Optional: use huge pages if configured via sysctl
+# Use huge pages if enabled in the system
 Environment=GGML_USE_HUGEPAGES=1
 
-# Stability & limits
 Restart=always
 RestartSec=3
 LimitNOFILE=1048576
 LimitNPROC=1048576
 
-# Security hardening
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
@@ -139,21 +197,19 @@ ProtectHome=true
 WantedBy=multi-user.target
 SERVICE
 
-# Create warmup service (optional)
+# Warmup service (optional)
 if [[ $WARMUP -eq 1 ]]; then
   cat > /etc/systemd/system/ollama-warmup.service <<WARMUP
 [Unit]
-Description=Warm up Ollama model
+Description=Warm up Ollama model (${DERIVED_MODEL})
 After=ollama.service
 Requires=ollama.service
 
 [Service]
 Type=oneshot
-# Give the server a moment to bind
 ExecStartPre=/bin/sleep 3
-# Run a short prompt to load weights and JIT kernels, discard output
 ExecStart=/bin/bash -lc '\
-  ${OLLAMA_BIN} run ${MODEL} --num_ctx ${NUM_CTX} --temperature ${TEMP} --top_p ${TOPP} -p "warm up" >/dev/null 2>&1 || true'
+  ${OLLAMA_BIN} run ${DERIVED_MODEL} -p "warm up" >/dev/null 2>&1 || true'
 TimeoutSec=600
 
 [Install]
@@ -161,17 +217,14 @@ WantedBy=multi-user.target
 WARMUP
 fi
 
-# Apply systemd changes and start services
 systemctl daemon-reload
 systemctl enable --now ollama
 
 if [[ $WARMUP -eq 1 ]]; then
   systemctl enable ollama-warmup
-  # Start warmup now (it will also run on next boot)
   systemctl start ollama-warmup || true
 fi
 
-# Summary
 cat <<SUMMARY
 
 [✓] Ollama service installed and started
@@ -181,18 +234,18 @@ cat <<SUMMARY
     - HugePages: ${HUGEPAGES}
     - Systemd unit: /etc/systemd/system/ollama.service
 
-$( [[ $WARMUP -eq 1 ]] && echo "[✓] Warmup service installed (model=${MODEL}, num_ctx=${NUM_CTX})
-    - Unit: /etc/systemd/system/ollama-warmup.service" )
+[✓] Model profile created via Modelfile
+    - Base model:   ${BASE_MODEL}
+    - Derived name: ${DERIVED_MODEL}
+    - Modelfile:    ${MODELF}
+    - num_ctx:      ${NUM_CTX}
 
-Manage services:
-  sudo systemctl status ollama
-  sudo systemctl restart ollama
-  sudo systemctl status ollama-warmup
+$( [[ $WARMUP -eq 1 ]] && echo "[✓] Warmup service installed (derived model=${DERIVED_MODEL})\n    - Unit: /etc/systemd/system/ollama-warmup.service" )
 
-Test locally:
+Run:
+  ollama run ${DERIVED_MODEL}
+
+Test local API:
   curl http://127.0.0.1:${PORT}/api/tags || true
-
-Security note:
-  Ollama is bound to localhost only. Use an SSH tunnel or reverse proxy if you need remote access.
 
 SUMMARY
