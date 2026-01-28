@@ -172,6 +172,8 @@ Wants=network-online.target
 Type=simple
 ExecStart=${OLLAMA_BIN} serve
 
+Environment="HOME=/usr/share/ollama"
+
 # CPU performance tuning
 Environment=OMP_NUM_THREADS=${THREADS}
 Environment=GGML_NUM_THREADS=${THREADS}
