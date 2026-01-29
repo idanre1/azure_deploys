@@ -43,6 +43,7 @@ Examples:
 
 USAGE
 }
+# maybe 4096 hughpages???
 
 require_root() {
   if [[ ${EUID:-$UID} -ne 0 ]]; then
@@ -211,8 +212,8 @@ Requires=ollama.service
 Type=oneshot
 ExecStartPre=/bin/sleep 3
 ExecStart=/bin/bash -lc '\
-  ${OLLAMA_BIN} run ${DERIVED_MODEL} -p "warm up" >/dev/null 2>&1 || true'
-TimeoutSec=600
+  ${OLLAMA_BIN} run ${DERIVED_MODEL} "warm up" 2>&1 || true'
+TimeoutSec=1200
 
 [Install]
 WantedBy=multi-user.target
