@@ -166,6 +166,9 @@ model_list:
       api_base: os.environ/AZURE_API_BASE
       api_key: os.environ/AZURE_API_KEY
       api_version: os.environ/AZURE_API_VERSION
+
+litellm_settings:
+  drop_params: true
 YAML
 $SUDO chmod 644 "$CONFIG_FILE"
 $SUDO chown root:root "$CONFIG_FILE"
