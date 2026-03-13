@@ -1,5 +1,5 @@
-# azure_deploys
-Azure deployment scripts
+# deployments
+deployment scripts for VMs
 
 Use templates to create automated VM scripts
 # default
